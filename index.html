@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Invoice Discount Editor (PDF)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; background:#f4f6f8; margin:0; padding:20px; }
+    h1 { margin-bottom: 10px; }
+    .box { background:#fff; padding:15px; border-radius:8px; margin-bottom:15px; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+    label { display:block; margin-top:8px; font-weight:600; }
+    input, button { padding:8px; margin-top:4px; }
+    canvas { border:1px dashed #aaa; margin-top:10px; cursor:crosshair; }
+    .row { display:flex; gap:15px; flex-wrap:wrap; }
+    .row > div { flex:1; min-width:200px; }
+  </style>
+</head>
+<body>
+
+<h1>Invoice Discount PDF Editor</h1>
+
+<div class="box">
+  <h3>1. Upload Invoice PDFs</h3>
+  <input type="file" id="pdfInput" accept="application/pdf" multiple />
+</div>
+
+<div class="box">
+  <h3>2. Discount Details</h3>
+  <div class="row">
+    <div>
+      <label>Discount Amount (₹)</label>
+      <input type="number" id="discountAmount" value="0" />
+    </div>
+    <div>
+      <label>Discount Label</label>
+      <input type="text" id="discountLabel" value="Discount" />
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h3>3. PDF Preview & Manual Position Selection</h3>
+  <p>Click on the PDF to capture coordinates for:</p>
+  <ol>
+    <li>Sub Total value</li>
+    <li>Net Total value</li>
+    <li>Rupees in Words</li>
+    <li>Discount row position (above Net Total)</li>
+  </ol>
+  <canvas id="pdfCanvas"></canvas>
+</div>
+
+<div class="box">
+  <h3>4. Actions</h3>
+  <button onclick="processPDFs()">Apply Discount & Download PDFs</button>
+</div>
+
+<script>
+let coords = [];
+let currentStep = 0;
+let pdfDocGlobal = null;
+
+const canvas = document.getElementById('pdfCanvas');
+const ctx = canvas.getContext('2d');
+
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  coords[currentStep] = { x, y };
+  alert(`Saved position for step ${currentStep + 1}`);
+  currentStep++;
+});
+
+async function renderPDF(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 1.5 });
+
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+}
+
+pdfInput.addEventListener('change', () => {
+  if (pdfInput.files.length > 0) {
+    renderPDF(pdfInput.files[0]);
+  }
+});
+
+function numberToWords(num) {
+  const a = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  function inWords(n) {
+    if (n < 20) return a[n];
+    if (n < 100) return b[Math.floor(n / 10)] + ' ' + a[n % 10];
+    if (n < 1000) return a[Math.floor(n / 100)] + ' Hundred ' + inWords(n % 100);
+    if (n < 100000) return inWords(Math.floor(n / 1000)) + ' Thousand ' + inWords(n % 1000);
+    return inWords(Math.floor(n / 100000)) + ' Lakh ' + inWords(n % 100000);
+  }
+  return inWords(num) + ' Only';
+}
+
+async function processPDFs() {
+  const discount = Number(document.getElementById('discountAmount').value);
+  const label = document.getElementById('discountLabel').value;
+
+  for (const file of pdfInput.files) {
+    const bytes = await file.arrayBuffer();
+    const pdfDoc = await PDFLib.PDFDocument.load(bytes);
+    const page = pdfDoc.getPages()[0];
+    const { height } = page.getSize();
+
+    const subTotalPos = coords[0];
+    const netTotalPos = coords[1];
+    const wordsPos = coords[2];
+    const discountPos = coords[3];
+
+    // NOTE: In real use, Sub Total value should be OCR extracted.
+    const subTotal = 73200; // demo
+    const newNet = subTotal - discount;
+
+    page.drawText(`${label}`, { x: discountPos.x, y: height - discountPos.y, size: 10 });
+    page.drawText(`-${discount.toFixed(2)}`, { x: discountPos.x + 200, y: height - discountPos.y, size: 10 });
+
+    page.drawText(`${newNet.toFixed(2)}`, { x: netTotalPos.x, y: height - netTotalPos.y, size: 10 });
+
+    page.drawText(`(Rupees ${numberToWords(newNet)})`, {
+      x: wordsPos.x,
+      y: height - wordsPos.y,
+      size: 9
+    });
+
+    const modifiedPdf = await pdfDoc.save();
+    const blob = new Blob([modifiedPdf], { type: 'application/pdf' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'invoice_with_discount.pdf';
+    link.click();
+  }
+}
+</script>
+
+</body>
+</html>
